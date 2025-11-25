@@ -254,82 +254,126 @@ class Image_Size_Manager {
     
     /**
      * Count how many images in the library have a specific image size
-     * 
+     *
      * @param string $size_name The name of the image size
-     * @return int The number of images with this size
+     * @return string The number of images with this size (with indicator if limited)
      */
     private function count_images_with_size($size_name) {
-        // Query for image attachments - limit to 1000 to avoid timeouts on large sites
+        // Get total count first
+        $total_query = new WP_Query(array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+        ));
+
+        $total_images = $total_query->found_posts;
+
+        // Limit to 1000 to avoid timeouts on large sites
+        $limit = min(1000, $total_images);
+
+        // Query for image attachments
         $query = new WP_Query(array(
             'post_type' => 'attachment',
             'post_mime_type' => 'image',
             'post_status' => 'inherit',
-            'posts_per_page' => 1000,
+            'posts_per_page' => $limit,
             'fields' => 'ids',
         ));
-        
+
         $count = 0;
-        
+
         // Loop through each attachment and check if it has the specified size
         if (!empty($query->posts)) {
             foreach ($query->posts as $attachment_id) {
                 $metadata = wp_get_attachment_metadata($attachment_id);
-                
+
                 // If the size exists in the metadata, increment the count
                 if (is_array($metadata) && isset($metadata['sizes']) && isset($metadata['sizes'][$size_name])) {
                     $count++;
                 }
             }
         }
-        
-        return $count;
+
+        // Add indicator if we're only showing partial results
+        if ($total_images > 1000) {
+            return $count . ' (of ' . $limit . ' checked)';
+        }
+
+        return (string) $count;
     }
     
     /**
      * Calculate the total disk space used by a specific image size
-     * 
+     *
      * @param string $size_name The name of the image size
-     * @return string Formatted file size in MB
+     * @return string Formatted file size in MB (with indicator if limited)
      */
     private function calculate_total_size($size_name) {
-        // Query for image attachments - limit to 1000 to avoid timeouts on large sites
+        // Get total count first
+        $total_query = new WP_Query(array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+        ));
+
+        $total_images = $total_query->found_posts;
+
+        // Limit to 1000 to avoid timeouts on large sites
+        $limit = min(1000, $total_images);
+
+        // Query for image attachments
         $query = new WP_Query(array(
             'post_type' => 'attachment',
             'post_mime_type' => 'image',
             'post_status' => 'inherit',
-            'posts_per_page' => 1000,
+            'posts_per_page' => $limit,
             'fields' => 'ids',
         ));
-        
+
         $total_size = 0;
         $upload_dir = wp_upload_dir();
+
+        // Validate upload directory
+        if (empty($upload_dir['basedir'])) {
+            return '0.00 MB';
+        }
+
         $base_dir = $upload_dir['basedir'];
-        
+
         // Loop through each attachment and calculate the size
         if (!empty($query->posts)) {
             foreach ($query->posts as $attachment_id) {
                 $metadata = wp_get_attachment_metadata($attachment_id);
-                
+
                 // Make sure all required data exists
-                if (empty($metadata) || !is_array($metadata) || 
-                    !isset($metadata['file']) || !isset($metadata['sizes']) || 
-                    !isset($metadata['sizes'][$size_name]) || 
+                if (empty($metadata) || !is_array($metadata) ||
+                    !isset($metadata['file']) || !isset($metadata['sizes']) ||
+                    !isset($metadata['sizes'][$size_name]) ||
                     !isset($metadata['sizes'][$size_name]['file'])) {
                     continue;
                 }
-                
+
                 try {
                     // Get the file path
                     $file_path = pathinfo($metadata['file'], PATHINFO_DIRNAME);
                     $size_file = $metadata['sizes'][$size_name]['file'];
-                    
+
                     // Ensure we have valid data
-                    if (empty($file_path) || empty($size_file)) {
+                    if (empty($size_file)) {
                         continue;
                     }
-                    
-                    $full_path = $base_dir . '/' . $file_path . '/' . $size_file;
-                    
+
+                    // Build full path
+                    if (!empty($file_path) && $file_path !== '.') {
+                        $full_path = $base_dir . '/' . $file_path . '/' . $size_file;
+                    } else {
+                        $full_path = $base_dir . '/' . $size_file;
+                    }
+
                     // Add the file size if it exists
                     if (file_exists($full_path) && is_readable($full_path)) {
                         $file_size = @filesize($full_path);
@@ -343,10 +387,17 @@ class Image_Size_Manager {
                 }
             }
         }
-        
+
         // Convert to MB and format
         $total_size_mb = $total_size / (1024 * 1024);
-        return number_format($total_size_mb, 2) . ' MB';
+        $formatted_size = number_format($total_size_mb, 2) . ' MB';
+
+        // Add indicator if we're only showing partial results
+        if ($total_images > 1000) {
+            $formatted_size .= ' (est.)';
+        }
+
+        return $formatted_size;
     }
     
     /**
@@ -354,18 +405,44 @@ class Image_Size_Manager {
      */
     public function filter_image_sizes($sizes) {
         $settings = get_option($this->option_name, array());
-        
+
+        // If no settings saved yet, allow all sizes (first time use)
         if (empty($settings)) {
             return $sizes;
         }
-        
+
+        // Remove disabled sizes
         foreach ($sizes as $size_name => $size_data) {
-            if (isset($settings[$size_name]) && !$settings[$size_name]) {
+            // If setting exists and is false (disabled), remove the size
+            // If setting doesn't exist (new size added by theme/plugin), keep it enabled by default
+            if (isset($settings[$size_name]) && $settings[$size_name] === false) {
                 unset($sizes[$size_name]);
             }
         }
-        
+
         return $sizes;
+    }
+
+    /**
+     * Get enabled image sizes based on settings
+     *
+     * @return array Array of enabled size names
+     */
+    private function get_enabled_sizes() {
+        $settings = get_option($this->option_name, array());
+        $all_sizes = $this->get_all_image_sizes();
+        $enabled_sizes = array();
+
+        foreach ($all_sizes as $size_name => $size_data) {
+            // If no settings exist, default to enabled
+            // If setting exists and is true, it's enabled
+            // If setting exists and is false, it's disabled
+            if (!isset($settings[$size_name]) || $settings[$size_name] === true) {
+                $enabled_sizes[] = $size_name;
+            }
+        }
+
+        return $enabled_sizes;
     }
     
     /**
@@ -373,18 +450,20 @@ class Image_Size_Manager {
      */
     public function ajax_regenerate_thumbnails() {
         // Check nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'ism_nonce')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'ism_nonce')) {
             wp_send_json_error(__('Security check failed', 'image-size-manager'));
+            return;
         }
-        
+
         // Check user capabilities
         if (!current_user_can('manage_options')) {
             wp_send_json_error(__('You do not have permission to do this', 'image-size-manager'));
+            return;
         }
-        
+
         // Get attachment ID
         $attachment_id = isset($_POST['attachment_id']) ? intval($_POST['attachment_id']) : 0;
-        
+
         // Get total attachments for first request
         if ($attachment_id === 0) {
             $query = new WP_Query(array(
@@ -394,24 +473,26 @@ class Image_Size_Manager {
                 'fields' => 'ids',
                 'posts_per_page' => -1,
             ));
-            
+
             wp_send_json_success(array(
                 'total' => $query->post_count,
                 'ids' => $query->posts
             ));
+            return;
         }
-        
+
         // Regenerate thumbnails for a specific attachment
         if ($attachment_id > 0) {
             $result = $this->regenerate_thumbnails($attachment_id);
-            
+
             if (is_wp_error($result)) {
                 wp_send_json_error($result->get_error_message());
             } else {
                 wp_send_json_success();
             }
+            return;
         }
-        
+
         wp_send_json_error(__('Invalid request', 'image-size-manager'));
     }
     
@@ -420,54 +501,114 @@ class Image_Size_Manager {
      */
     private function regenerate_thumbnails($attachment_id) {
         $attachment = get_post($attachment_id);
-        
+
         if (!$attachment || 'attachment' !== $attachment->post_type || 'image/' !== substr($attachment->post_mime_type, 0, 6)) {
             return new WP_Error('not_image', __('This is not a valid image attachment', 'image-size-manager'));
         }
-        
+
         // Get the original image file path
         $file_path = get_attached_file($attachment_id);
-        
+
         if (!file_exists($file_path)) {
             return new WP_Error('file_not_found', __('Original image file not found', 'image-size-manager'));
         }
-        
+
         // Include image functions if not already loaded
         if (!function_exists('wp_generate_attachment_metadata')) {
             require_once(ABSPATH . 'wp-admin/includes/image.php');
         }
-        
+
         // Remove old thumbnails
         $metadata = wp_get_attachment_metadata($attachment_id);
         $this->remove_old_thumbnails($file_path, $metadata);
-        
+
         // Generate new metadata and thumbnails
+        // The intermediate_image_sizes_advanced filter should filter out disabled sizes
         $new_metadata = wp_generate_attachment_metadata($attachment_id, $file_path);
-        
+
         if (is_wp_error($new_metadata)) {
             return $new_metadata;
         }
-        
+
+        // Double-check: Remove any disabled size files that might have been generated
+        // This ensures disabled sizes are truly not present after regeneration
+        $new_metadata = $this->filter_metadata_sizes($new_metadata, $file_path);
+
         // Update attachment metadata
         wp_update_attachment_metadata($attachment_id, $new_metadata);
-        
+
         return true;
+    }
+
+    /**
+     * Filter metadata to remove disabled sizes and delete their files
+     *
+     * @param array $metadata Attachment metadata
+     * @param string $file_path Path to the original file
+     * @return array Filtered metadata
+     */
+    private function filter_metadata_sizes($metadata, $file_path) {
+        if (empty($metadata['sizes']) || !is_array($metadata['sizes'])) {
+            return $metadata;
+        }
+
+        $enabled_sizes = $this->get_enabled_sizes();
+        $dir_path = dirname($file_path) . '/';
+
+        // Remove disabled sizes from metadata and delete their files
+        foreach ($metadata['sizes'] as $size_name => $size_data) {
+            if (!in_array($size_name, $enabled_sizes, true)) {
+                // Delete the file if it exists
+                if (isset($size_data['file'])) {
+                    $file_to_delete = $dir_path . $size_data['file'];
+                    if (file_exists($file_to_delete)) {
+                        @unlink($file_to_delete);
+                    }
+                }
+
+                // Remove from metadata
+                unset($metadata['sizes'][$size_name]);
+            }
+        }
+
+        return $metadata;
     }
     
     /**
      * Remove old thumbnails
+     *
+     * @param string $file_path Path to the original file
+     * @param array|false $metadata Attachment metadata
      */
     private function remove_old_thumbnails($file_path, $metadata) {
-        if (empty($metadata['sizes'])) {
+        // Validate inputs
+        if (empty($file_path) || !is_string($file_path)) {
             return;
         }
-        
-        $dir_path = dirname($file_path) . '/';
-        
+
+        if (empty($metadata) || !is_array($metadata) || empty($metadata['sizes']) || !is_array($metadata['sizes'])) {
+            return;
+        }
+
+        $dir_path = dirname($file_path);
+
+        // Validate directory path
+        if (empty($dir_path) || !is_dir($dir_path)) {
+            return;
+        }
+
+        $dir_path .= '/';
+
+        // Remove each thumbnail file
         foreach ($metadata['sizes'] as $size => $sizeinfo) {
+            if (!isset($sizeinfo['file']) || empty($sizeinfo['file'])) {
+                continue;
+            }
+
             $file = $dir_path . $sizeinfo['file'];
-            
-            if (file_exists($file)) {
+
+            // Delete the file if it exists and is a file (not a directory)
+            if (file_exists($file) && is_file($file)) {
                 @unlink($file);
             }
         }
