@@ -1,0 +1,129 @@
+/**
+ * Image Size Manager Admin CSS
+ */
+
+ .ism-table {
+    margin-top: 20px;
+    max-width: 1200px;
+    width: 100%;
+}
+
+.ism-table th,
+.ism-table td {
+    padding: 15px;
+    font-size: 18px;
+}
+
+/* Align headers with their data */
+.ism-table th:nth-child(5),
+.ism-table td:nth-child(5) {
+    text-align: right;
+    padding-right: 20px;
+}
+
+.ism-table th:nth-child(6),
+.ism-table td:nth-child(6) {
+    text-align: right;
+    padding-right: 20px;
+}
+
+.ism-table tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+/* Toggle Switch */
+.ism-switch {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 34px;
+}
+
+.ism-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.ism-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 34px;
+}
+
+.ism-slider:before {
+    position: absolute;
+    content: "";
+    height: 26px;
+    width: 26px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .ism-slider {
+    background-color: #2196F3;
+}
+
+input:focus + .ism-slider {
+    box-shadow: 0 0 1px #2196F3;
+}
+
+input:checked + .ism-slider:before {
+    transform: translateX(26px);
+}
+
+.submit .button-primary {
+    display: block;
+    padding: 10px 20px;
+    height: auto;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+#ism-regenerate-button {
+    display: block;
+    margin-top: 15px;
+    padding: 10px 20px;
+    height: auto;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+/* Progress bar */
+#ism-regenerate-progress-container {
+    margin-top: 20px;
+    padding: 15px;
+    border: 1px solid #ddd;
+    background-color: #f9f9f9;
+    border-radius: 3px;
+}
+
+#ism-regenerate-progress {
+    height: 20px;
+    margin-bottom: 10px;
+    background-color: #f5f5f5;
+    border-radius: 4px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.ui-progressbar .ui-progressbar-value {
+    height: 100%;
+    background-color: #0073aa;
+    border-radius: 4px;
+    margin: 0;
+}
+
+#ism-regenerate-status {
+    margin-top: 8px;
+    font-style: italic;
+}
