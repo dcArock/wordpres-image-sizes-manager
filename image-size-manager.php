@@ -3,7 +3,7 @@
  * Plugin Name: Image Size Manager
  * Plugin URI: https://dcarock.com/wordpress/
  * Description: Manage WordPress image sizes with enable/disable toggles and regenerate thumbnails.
- * Version: 2.4.0
+ * Version: 3.0.0
  * Author: Chris Arock
  * Author URI: https://dcarock.com
  * Text Domain: image-size-manager
@@ -16,7 +16,7 @@ if (!defined('WPINC')) {
 }
 
 // Define plugin constants
-define('ISM_VERSION', '2.4.0');
+define('ISM_VERSION', '3.0.0');
 define('ISM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ISM_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -693,9 +693,16 @@ class Image_Size_Manager {
             $result = $this->regenerate_thumbnails($attachment_id);
 
             if (is_wp_error($result)) {
-                wp_send_json_error($result->get_error_message());
+                // Return error with attachment ID for better tracking
+                wp_send_json_error(array(
+                    'message' => $result->get_error_message(),
+                    'attachment_id' => $attachment_id,
+                    'error_code' => $result->get_error_code()
+                ));
             } else {
-                wp_send_json_success();
+                wp_send_json_success(array(
+                    'attachment_id' => $attachment_id
+                ));
             }
             return;
         }
@@ -752,9 +759,18 @@ class Image_Size_Manager {
             $result = $this->regenerate_single_size($attachment_id, $size_name);
 
             if (is_wp_error($result)) {
-                wp_send_json_error($result->get_error_message());
+                // Return error with attachment ID and size for better tracking
+                wp_send_json_error(array(
+                    'message' => $result->get_error_message(),
+                    'attachment_id' => $attachment_id,
+                    'size_name' => $size_name,
+                    'error_code' => $result->get_error_code()
+                ));
             } else {
-                wp_send_json_success();
+                wp_send_json_success(array(
+                    'attachment_id' => $attachment_id,
+                    'size_name' => $size_name
+                ));
             }
             return;
         }
@@ -804,19 +820,53 @@ class Image_Size_Manager {
 
     /**
      * Regenerate thumbnails for a specific attachment
+     *
+     * @param int $attachment_id The attachment ID
+     * @return true|WP_Error True on success, WP_Error on failure
      */
     private function regenerate_thumbnails($attachment_id) {
-        $attachment = get_post($attachment_id);
-
-        if (!$attachment || 'attachment' !== $attachment->post_type || 'image/' !== substr($attachment->post_mime_type, 0, 6)) {
-            return new WP_Error('not_image', __('This is not a valid image attachment', 'image-size-manager'));
+        // Validate attachment ID
+        if (empty($attachment_id) || !is_numeric($attachment_id)) {
+            return new WP_Error('invalid_id', sprintf(__('Invalid attachment ID: %s', 'image-size-manager'), $attachment_id));
         }
 
-        // Get the original image file path
+        $attachment = get_post($attachment_id);
+
+        // Validate attachment exists and is an image
+        if (!$attachment || 'attachment' !== $attachment->post_type) {
+            return new WP_Error('not_attachment', sprintf(__('Attachment ID %d is not a valid attachment', 'image-size-manager'), $attachment_id));
+        }
+
+        if (!$attachment->post_mime_type || 'image/' !== substr($attachment->post_mime_type, 0, 6)) {
+            return new WP_Error('not_image', sprintf(__('Attachment ID %d is not an image (mime type: %s)', 'image-size-manager'), $attachment_id, $attachment->post_mime_type));
+        }
+
+        // Get the original image file path with explicit validation
         $file_path = get_attached_file($attachment_id);
 
+        if (false === $file_path || empty($file_path)) {
+            return new WP_Error('no_file_path', sprintf(__('Could not retrieve file path for attachment ID %d', 'image-size-manager'), $attachment_id));
+        }
+
+        // Validate file exists
         if (!file_exists($file_path)) {
-            return new WP_Error('file_not_found', __('Original image file not found', 'image-size-manager'));
+            return new WP_Error('file_not_found', sprintf(__('File not found for attachment ID %d (path: %s)', 'image-size-manager'), $attachment_id, $file_path));
+        }
+
+        // Validate file is readable
+        if (!is_readable($file_path)) {
+            return new WP_Error('file_not_readable', sprintf(__('File not readable for attachment ID %d (path: %s)', 'image-size-manager'), $attachment_id, $file_path));
+        }
+
+        // Validate it's actually a file (not a directory)
+        if (!is_file($file_path)) {
+            return new WP_Error('not_a_file', sprintf(__('Path is not a file for attachment ID %d (path: %s)', 'image-size-manager'), $attachment_id, $file_path));
+        }
+
+        // Check file size
+        $file_size = @filesize($file_path);
+        if (false === $file_size || $file_size === 0) {
+            return new WP_Error('empty_file', sprintf(__('File is empty or unreadable for attachment ID %d (path: %s)', 'image-size-manager'), $attachment_id, $file_path));
         }
 
         // Include image functions if not already loaded
@@ -833,7 +883,21 @@ class Image_Size_Manager {
         $new_metadata = wp_generate_attachment_metadata($attachment_id, $file_path);
 
         if (is_wp_error($new_metadata)) {
-            return $new_metadata;
+            return new WP_Error(
+                $new_metadata->get_error_code(),
+                sprintf(
+                    __('Failed to generate metadata for attachment ID %d: %s (path: %s, size: %s)', 'image-size-manager'),
+                    $attachment_id,
+                    $new_metadata->get_error_message(),
+                    $file_path,
+                    size_format($file_size)
+                )
+            );
+        }
+
+        // Handle empty metadata
+        if (empty($new_metadata)) {
+            return new WP_Error('empty_metadata', sprintf(__('Generated metadata is empty for attachment ID %d', 'image-size-manager'), $attachment_id));
         }
 
         // Double-check: Remove any disabled size files that might have been generated
@@ -854,17 +918,48 @@ class Image_Size_Manager {
      * @return true|WP_Error True on success, WP_Error on failure
      */
     private function regenerate_single_size($attachment_id, $size_name) {
-        $attachment = get_post($attachment_id);
-
-        if (!$attachment || 'attachment' !== $attachment->post_type || 'image/' !== substr($attachment->post_mime_type, 0, 6)) {
-            return new WP_Error('not_image', __('This is not a valid image attachment', 'image-size-manager'));
+        // Validate attachment ID
+        if (empty($attachment_id) || !is_numeric($attachment_id)) {
+            return new WP_Error('invalid_id', sprintf(__('Invalid attachment ID: %s', 'image-size-manager'), $attachment_id));
         }
 
-        // Get the original image file path
+        $attachment = get_post($attachment_id);
+
+        // Validate attachment exists and is an image
+        if (!$attachment || 'attachment' !== $attachment->post_type) {
+            return new WP_Error('not_attachment', sprintf(__('Attachment ID %d is not a valid attachment', 'image-size-manager'), $attachment_id));
+        }
+
+        if (!$attachment->post_mime_type || 'image/' !== substr($attachment->post_mime_type, 0, 6)) {
+            return new WP_Error('not_image', sprintf(__('Attachment ID %d is not an image (mime type: %s)', 'image-size-manager'), $attachment_id, $attachment->post_mime_type));
+        }
+
+        // Get the original image file path with explicit validation
         $file_path = get_attached_file($attachment_id);
 
+        if (false === $file_path || empty($file_path)) {
+            return new WP_Error('no_file_path', sprintf(__('Could not retrieve file path for attachment ID %d', 'image-size-manager'), $attachment_id));
+        }
+
+        // Validate file exists
         if (!file_exists($file_path)) {
-            return new WP_Error('file_not_found', __('Original image file not found', 'image-size-manager'));
+            return new WP_Error('file_not_found', sprintf(__('File not found for attachment ID %d (path: %s)', 'image-size-manager'), $attachment_id, $file_path));
+        }
+
+        // Validate file is readable
+        if (!is_readable($file_path)) {
+            return new WP_Error('file_not_readable', sprintf(__('File not readable for attachment ID %d (path: %s)', 'image-size-manager'), $attachment_id, $file_path));
+        }
+
+        // Validate it's actually a file (not a directory)
+        if (!is_file($file_path)) {
+            return new WP_Error('not_a_file', sprintf(__('Path is not a file for attachment ID %d (path: %s)', 'image-size-manager'), $attachment_id, $file_path));
+        }
+
+        // Check file size
+        $file_size = @filesize($file_path);
+        if (false === $file_size || $file_size === 0) {
+            return new WP_Error('empty_file', sprintf(__('File is empty or unreadable for attachment ID %d (path: %s)', 'image-size-manager'), $attachment_id, $file_path));
         }
 
         // Include image functions if not already loaded
@@ -877,14 +972,14 @@ class Image_Size_Manager {
 
         // Check if the requested size exists
         if (!isset($all_sizes[$size_name])) {
-            return new WP_Error('invalid_size', __('Invalid image size', 'image-size-manager'));
+            return new WP_Error('invalid_size', sprintf(__('Invalid image size "%s" for attachment ID %d', 'image-size-manager'), $size_name, $attachment_id));
         }
 
         // Get current metadata
         $metadata = wp_get_attachment_metadata($attachment_id);
 
         if (!$metadata || !is_array($metadata)) {
-            return new WP_Error('no_metadata', __('Could not retrieve attachment metadata', 'image-size-manager'));
+            return new WP_Error('no_metadata', sprintf(__('Could not retrieve metadata for attachment ID %d', 'image-size-manager'), $attachment_id));
         }
 
         // Get size data
@@ -906,10 +1001,8 @@ class Image_Size_Manager {
                 if (isset($metadata['sizes'][$size_name])) {
                     // Delete the file if it exists
                     if (isset($metadata['sizes'][$size_name]['file'])) {
-                        $old_file = dirname($file_path) . '/' . $metadata['sizes'][$size_name]['file'];
-                        if (file_exists($old_file) && is_file($old_file)) {
-                            @unlink($old_file);
-                        }
+                        $old_file = $this->build_path(dirname($file_path), $metadata['sizes'][$size_name]['file']);
+                        $this->safe_delete_file($old_file);
                     }
                     unset($metadata['sizes'][$size_name]);
                     wp_update_attachment_metadata($attachment_id, $metadata);
@@ -920,17 +1013,25 @@ class Image_Size_Manager {
 
         // Remove old version of this size if it exists
         if (isset($metadata['sizes'][$size_name]) && isset($metadata['sizes'][$size_name]['file'])) {
-            $old_file = dirname($file_path) . '/' . $metadata['sizes'][$size_name]['file'];
-            if (file_exists($old_file) && is_file($old_file)) {
-                @unlink($old_file);
-            }
+            $old_file = $this->build_path(dirname($file_path), $metadata['sizes'][$size_name]['file']);
+            $this->safe_delete_file($old_file);
         }
 
-        // Get image editor
+        // Get image editor - THIS is where "File is not an image" errors come from
         $editor = wp_get_image_editor($file_path);
 
         if (is_wp_error($editor)) {
-            return $editor;
+            // Add more context to the error
+            return new WP_Error(
+                $editor->get_error_code(),
+                sprintf(
+                    __('Failed to load image editor for attachment ID %d: %s (path: %s, size: %s)', 'image-size-manager'),
+                    $attachment_id,
+                    $editor->get_error_message(),
+                    $file_path,
+                    size_format($file_size)
+                )
+            );
         }
 
         // Resize the image
@@ -946,7 +1047,10 @@ class Image_Size_Manager {
                 }
                 return true; // Not a fatal error, just skip
             }
-            return $resized;
+            return new WP_Error(
+                $resized->get_error_code(),
+                sprintf(__('Resize failed for attachment ID %d, size "%s": %s', 'image-size-manager'), $attachment_id, $size_name, $resized->get_error_message())
+            );
         }
 
         // Generate filename
@@ -960,7 +1064,10 @@ class Image_Size_Manager {
         $saved = $editor->save($dest_file_name);
 
         if (is_wp_error($saved)) {
-            return $saved;
+            return new WP_Error(
+                $saved->get_error_code(),
+                sprintf(__('Save failed for attachment ID %d, size "%s": %s', 'image-size-manager'), $attachment_id, $size_name, $saved->get_error_message())
+            );
         }
 
         // Update metadata with new size information
@@ -982,6 +1089,54 @@ class Image_Size_Manager {
     }
 
     /**
+     * Safely build a file path from directory and filename
+     *
+     * @param string $dir Directory path
+     * @param string $file Filename
+     * @return string Complete file path
+     */
+    private function build_path($dir, $file) {
+        // Normalize directory separators
+        $dir = rtrim($dir, '/\\');
+        $file = ltrim($file, '/\\');
+
+        return $dir . DIRECTORY_SEPARATOR . $file;
+    }
+
+    /**
+     * Safely delete a file with proper error checking
+     *
+     * @param string $file_path Path to file to delete
+     * @return bool True on success or if file doesn't exist, false on failure
+     */
+    private function safe_delete_file($file_path) {
+        // Don't attempt to delete if path is empty
+        if (empty($file_path)) {
+            return true;
+        }
+
+        // Check if file exists
+        if (!file_exists($file_path)) {
+            return true; // Already gone, consider it success
+        }
+
+        // Ensure it's actually a file (not a directory)
+        if (!is_file($file_path)) {
+            return false;
+        }
+
+        // Attempt to delete the file
+        $result = @unlink($file_path);
+
+        // Log error if deletion failed (but don't crash)
+        if (!$result) {
+            error_log(sprintf('Image Size Manager: Failed to delete file: %s', $file_path));
+        }
+
+        return $result;
+    }
+
+    /**
      * Filter metadata to remove disabled sizes and delete their files
      *
      * @param array $metadata Attachment metadata
@@ -994,17 +1149,15 @@ class Image_Size_Manager {
         }
 
         $enabled_sizes = $this->get_enabled_sizes();
-        $dir_path = dirname($file_path) . '/';
+        $dir_path = dirname($file_path);
 
         // Remove disabled sizes from metadata and delete their files
         foreach ($metadata['sizes'] as $size_name => $size_data) {
             if (!in_array($size_name, $enabled_sizes, true)) {
                 // Delete the file if it exists
                 if (isset($size_data['file'])) {
-                    $file_to_delete = $dir_path . $size_data['file'];
-                    if (file_exists($file_to_delete)) {
-                        @unlink($file_to_delete);
-                    }
+                    $file_to_delete = $this->build_path($dir_path, $size_data['file']);
+                    $this->safe_delete_file($file_to_delete);
                 }
 
                 // Remove from metadata
@@ -1038,20 +1191,14 @@ class Image_Size_Manager {
             return;
         }
 
-        $dir_path .= '/';
-
         // Remove each thumbnail file
         foreach ($metadata['sizes'] as $size => $sizeinfo) {
             if (!isset($sizeinfo['file']) || empty($sizeinfo['file'])) {
                 continue;
             }
 
-            $file = $dir_path . $sizeinfo['file'];
-
-            // Delete the file if it exists and is a file (not a directory)
-            if (file_exists($file) && is_file($file)) {
-                @unlink($file);
-            }
+            $file = $this->build_path($dir_path, $sizeinfo['file']);
+            $this->safe_delete_file($file);
         }
     }
 }
