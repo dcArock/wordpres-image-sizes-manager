@@ -3,7 +3,7 @@
  * Plugin Name: Image Size Manager
  * Plugin URI: https://dcarock.com/wordpress/
  * Description: Manage WordPress image sizes with enable/disable toggles and regenerate thumbnails.
- * Version: 2.3.0
+ * Version: 2.4.0
  * Author: Chris Arock
  * Author URI: https://dcarock.com
  * Text Domain: image-size-manager
@@ -16,7 +16,7 @@ if (!defined('WPINC')) {
 }
 
 // Define plugin constants
-define('ISM_VERSION', '2.3.0');
+define('ISM_VERSION', '2.4.0');
 define('ISM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ISM_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -239,6 +239,7 @@ class Image_Size_Manager {
                         <?php foreach ($image_sizes as $size_name => $size_data) :
                             $usage_count = $this->count_images_with_size($size_name);
                             $total_size = $this->calculate_total_size($size_name);
+                            $is_enabled = isset($settings[$size_name]) && $settings[$size_name];
                         ?>
                             <tr>
                                 <td><strong><?php echo esc_html($size_name); ?></strong></td>
@@ -249,12 +250,12 @@ class Image_Size_Manager {
                                 <td><?php echo esc_html($total_size); ?></td>
                                 <td>
                                     <label class="ism-switch">
-                                        <input type="checkbox" name="<?php echo esc_attr($this->option_name); ?>[<?php echo esc_attr($size_name); ?>]" value="1" <?php checked(isset($settings[$size_name]) && $settings[$size_name]); ?>>
+                                        <input type="checkbox" name="<?php echo esc_attr($this->option_name); ?>[<?php echo esc_attr($size_name); ?>]" value="1" <?php checked($is_enabled); ?>>
                                         <span class="ism-slider"></span>
                                     </label>
                                 </td>
                                 <td>
-                                    <button type="button" class="button button-small ism-regenerate-size" data-size="<?php echo esc_attr($size_name); ?>">
+                                    <button type="button" class="button button-small ism-regenerate-size" data-size="<?php echo esc_attr($size_name); ?>" <?php echo !$is_enabled ? 'disabled title="' . esc_attr__('Enable this size to regenerate', 'image-size-manager') . '"' : ''; ?>>
                                         <?php echo esc_html__('Regenerate', 'image-size-manager'); ?>
                                     </button>
                                 </td>
