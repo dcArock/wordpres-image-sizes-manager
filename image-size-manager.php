@@ -886,6 +886,37 @@ class Image_Size_Manager {
             return new WP_Error('no_metadata', __('Could not retrieve attachment metadata', 'image-size-manager'));
         }
 
+        // Get size data
+        $size_data = $all_sizes[$size_name];
+        $width = isset($size_data['width']) ? intval($size_data['width']) : 0;
+        $height = isset($size_data['height']) ? intval($size_data['height']) : 0;
+        $crop = isset($size_data['crop']) ? $size_data['crop'] : false;
+
+        // Get original image dimensions
+        $orig_width = isset($metadata['width']) ? intval($metadata['width']) : 0;
+        $orig_height = isset($metadata['height']) ? intval($metadata['height']) : 0;
+
+        // Check if original image is large enough
+        // Skip if image is smaller than requested size (WordPress behavior)
+        if ($orig_width > 0 && $orig_height > 0) {
+            // If not cropping and image is smaller, skip
+            if (!$crop && ($orig_width < $width && $orig_height < $height)) {
+                // Remove from metadata if it exists
+                if (isset($metadata['sizes'][$size_name])) {
+                    // Delete the file if it exists
+                    if (isset($metadata['sizes'][$size_name]['file'])) {
+                        $old_file = dirname($file_path) . '/' . $metadata['sizes'][$size_name]['file'];
+                        if (file_exists($old_file) && is_file($old_file)) {
+                            @unlink($old_file);
+                        }
+                    }
+                    unset($metadata['sizes'][$size_name]);
+                    wp_update_attachment_metadata($attachment_id, $metadata);
+                }
+                return true; // Not an error, just skip this image
+            }
+        }
+
         // Remove old version of this size if it exists
         if (isset($metadata['sizes'][$size_name]) && isset($metadata['sizes'][$size_name]['file'])) {
             $old_file = dirname($file_path) . '/' . $metadata['sizes'][$size_name]['file'];
@@ -901,16 +932,19 @@ class Image_Size_Manager {
             return $editor;
         }
 
-        // Get size data
-        $size_data = $all_sizes[$size_name];
-        $width = isset($size_data['width']) ? $size_data['width'] : 0;
-        $height = isset($size_data['height']) ? $size_data['height'] : 0;
-        $crop = isset($size_data['crop']) ? $size_data['crop'] : false;
-
         // Resize the image
         $resized = $editor->resize($width, $height, $crop);
 
         if (is_wp_error($resized)) {
+            // If resize fails due to image being too small, skip it gracefully
+            if (strpos($resized->get_error_message(), 'dimensions') !== false) {
+                // Remove from metadata if it exists
+                if (isset($metadata['sizes'][$size_name])) {
+                    unset($metadata['sizes'][$size_name]);
+                    wp_update_attachment_metadata($attachment_id, $metadata);
+                }
+                return true; // Not a fatal error, just skip
+            }
             return $resized;
         }
 
