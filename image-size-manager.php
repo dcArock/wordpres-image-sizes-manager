@@ -3,7 +3,7 @@
  * Plugin Name: Image Size Manager
  * Plugin URI: https://dcarock.com/wordpress/
  * Description: Manage WordPress image sizes with enable/disable toggles and regenerate thumbnails.
- * Version: 1.0.0
+ * Version: 2.1.0
  * Author: Chris Arock
  * Author URI: https://dcarock.com
  * Text Domain: image-size-manager
@@ -16,7 +16,7 @@ if (!defined('WPINC')) {
 }
 
 // Define plugin constants
-define('ISM_VERSION', '1.0.0');
+define('ISM_VERSION', '2.1.0');
 define('ISM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ISM_PLUGIN_URL', plugin_dir_url(__FILE__));
 
@@ -63,6 +63,12 @@ class Image_Size_Manager {
         
         // Ajax handler for regenerating thumbnails
         add_action('wp_ajax_ism_regenerate_thumbnails', array($this, 'ajax_regenerate_thumbnails'));
+
+        // Ajax handler for storing pre-regeneration memory
+        add_action('wp_ajax_ism_store_memory', array($this, 'ajax_store_memory'));
+
+        // Ajax handler for clearing savings data
+        add_action('wp_ajax_ism_clear_savings', array($this, 'ajax_clear_savings'));
     }
     
     /**
@@ -158,11 +164,49 @@ class Image_Size_Manager {
                 $settings[$size_name] = true;
             }
         }
-        
+
+        // Calculate total memory usage
+        $total_memory = $this->calculate_total_memory_usage();
+
+        // Get memory savings if available
+        $memory_savings = $this->get_memory_savings();
+
         ?>
         <div class="wrap">
             <h1><?php echo esc_html__('Image Size Manager', 'image-size-manager'); ?></h1>
-            
+
+            <div class="ism-memory-stats">
+                <div class="ism-total-memory">
+                    <h2><?php echo esc_html__('Total Image Size Memory Usage', 'image-size-manager'); ?></h2>
+                    <p class="ism-memory-value"><?php echo esc_html($total_memory['formatted']); ?></p>
+                    <p class="ism-memory-description"><?php echo esc_html__('Total disk space used by all generated image sizes', 'image-size-manager'); ?></p>
+                </div>
+
+                <?php if ($memory_savings !== null) : ?>
+                <div class="ism-memory-savings <?php echo $memory_savings['is_savings'] ? 'ism-savings-positive' : 'ism-savings-negative'; ?>">
+                    <h3>
+                        <?php if ($memory_savings['is_savings']) : ?>
+                            <?php echo esc_html__('Memory Saved After Last Regeneration', 'image-size-manager'); ?>
+                        <?php else : ?>
+                            <?php echo esc_html__('Memory Added After Last Regeneration', 'image-size-manager'); ?>
+                        <?php endif; ?>
+                    </h3>
+                    <p class="ism-savings-value">
+                        <?php if ($memory_savings['is_savings']) : ?>
+                            <span class="ism-savings-icon">✓</span> <?php echo esc_html($memory_savings['saved_formatted']); ?>
+                            <span class="ism-savings-percentage">(<?php echo esc_html(number_format($memory_savings['percentage'], 1)); ?>% reduction)</span>
+                        <?php else : ?>
+                            <span class="ism-savings-icon">+</span> <?php echo esc_html($memory_savings['saved_formatted']); ?>
+                            <span class="ism-savings-percentage">(<?php echo esc_html(number_format(abs($memory_savings['percentage']), 1)); ?>% increase)</span>
+                        <?php endif; ?>
+                    </p>
+                    <button type="button" id="ism-clear-savings" class="button button-small">
+                        <?php echo esc_html__('Clear Savings Data', 'image-size-manager'); ?>
+                    </button>
+                </div>
+                <?php endif; ?>
+            </div>
+
             <form method="post" action="options.php">
                 <?php settings_fields('ism_settings_group'); ?>
                 
@@ -399,7 +443,160 @@ class Image_Size_Manager {
 
         return $formatted_size;
     }
-    
+
+    /**
+     * Calculate the total memory usage across all image sizes
+     *
+     * @return array Array with 'bytes' and 'formatted' keys
+     */
+    private function calculate_total_memory_usage() {
+        $image_sizes = $this->get_all_image_sizes();
+        $total_bytes = 0;
+
+        // Get total count first
+        $total_query = new WP_Query(array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+        ));
+
+        $total_images = $total_query->found_posts;
+
+        // Limit to 1000 to avoid timeouts on large sites
+        $limit = min(1000, $total_images);
+
+        // Query for image attachments
+        $query = new WP_Query(array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'post_status' => 'inherit',
+            'posts_per_page' => $limit,
+            'fields' => 'ids',
+        ));
+
+        $upload_dir = wp_upload_dir();
+
+        // Validate upload directory
+        if (empty($upload_dir['basedir'])) {
+            return array('bytes' => 0, 'formatted' => '0.00 MB');
+        }
+
+        $base_dir = $upload_dir['basedir'];
+
+        // Loop through each attachment
+        if (!empty($query->posts)) {
+            foreach ($query->posts as $attachment_id) {
+                $metadata = wp_get_attachment_metadata($attachment_id);
+
+                // Make sure all required data exists
+                if (empty($metadata) || !is_array($metadata) ||
+                    !isset($metadata['file']) || !isset($metadata['sizes']) ||
+                    !is_array($metadata['sizes'])) {
+                    continue;
+                }
+
+                // Loop through all sizes for this attachment
+                foreach ($metadata['sizes'] as $size_name => $size_data) {
+                    if (!isset($size_data['file'])) {
+                        continue;
+                    }
+
+                    try {
+                        // Get the file path
+                        $file_path = pathinfo($metadata['file'], PATHINFO_DIRNAME);
+                        $size_file = $size_data['file'];
+
+                        // Ensure we have valid data
+                        if (empty($size_file)) {
+                            continue;
+                        }
+
+                        // Build full path
+                        if (!empty($file_path) && $file_path !== '.') {
+                            $full_path = $base_dir . '/' . $file_path . '/' . $size_file;
+                        } else {
+                            $full_path = $base_dir . '/' . $size_file;
+                        }
+
+                        // Add the file size if it exists
+                        if (file_exists($full_path) && is_readable($full_path)) {
+                            $file_size = @filesize($full_path);
+                            if ($file_size !== false) {
+                                $total_bytes += $file_size;
+                            }
+                        }
+                    } catch (Exception $e) {
+                        // Silently fail for any individual image
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Convert to MB and format
+        $total_size_mb = $total_bytes / (1024 * 1024);
+        $formatted_size = number_format($total_size_mb, 2) . ' MB';
+
+        // Add indicator if we're only showing partial results
+        if ($total_images > 1000) {
+            $formatted_size .= ' (estimated)';
+        }
+
+        return array(
+            'bytes' => $total_bytes,
+            'formatted' => $formatted_size
+        );
+    }
+
+    /**
+     * Store memory usage before regeneration
+     */
+    private function store_pre_regeneration_memory() {
+        $memory_data = $this->calculate_total_memory_usage();
+        update_option('ism_pre_regeneration_memory', $memory_data['bytes']);
+        update_option('ism_pre_regeneration_time', current_time('timestamp'));
+    }
+
+    /**
+     * Get memory savings after regeneration
+     *
+     * @return array|null Array with 'saved_bytes', 'saved_formatted', and 'percentage' keys, or null if no data
+     */
+    private function get_memory_savings() {
+        $pre_memory = get_option('ism_pre_regeneration_memory', null);
+
+        if ($pre_memory === null) {
+            return null;
+        }
+
+        $current_memory = $this->calculate_total_memory_usage();
+        $saved_bytes = $pre_memory - $current_memory['bytes'];
+        $saved_mb = $saved_bytes / (1024 * 1024);
+
+        // Calculate percentage
+        $percentage = 0;
+        if ($pre_memory > 0) {
+            $percentage = ($saved_bytes / $pre_memory) * 100;
+        }
+
+        return array(
+            'saved_bytes' => $saved_bytes,
+            'saved_formatted' => number_format(abs($saved_mb), 2) . ' MB',
+            'percentage' => $percentage,
+            'is_savings' => $saved_bytes > 0
+        );
+    }
+
+    /**
+     * Clear memory savings data
+     */
+    private function clear_memory_savings() {
+        delete_option('ism_pre_regeneration_memory');
+        delete_option('ism_pre_regeneration_time');
+    }
+
     /**
      * Filter image sizes based on settings
      */
@@ -495,7 +692,47 @@ class Image_Size_Manager {
 
         wp_send_json_error(__('Invalid request', 'image-size-manager'));
     }
-    
+
+    /**
+     * Ajax handler for storing pre-regeneration memory
+     */
+    public function ajax_store_memory() {
+        // Check nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'ism_nonce')) {
+            wp_send_json_error(__('Security check failed', 'image-size-manager'));
+            return;
+        }
+
+        // Check user capabilities
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(__('You do not have permission to do this', 'image-size-manager'));
+            return;
+        }
+
+        $this->store_pre_regeneration_memory();
+        wp_send_json_success();
+    }
+
+    /**
+     * Ajax handler for clearing savings data
+     */
+    public function ajax_clear_savings() {
+        // Check nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'ism_nonce')) {
+            wp_send_json_error(__('Security check failed', 'image-size-manager'));
+            return;
+        }
+
+        // Check user capabilities
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(__('You do not have permission to do this', 'image-size-manager'));
+            return;
+        }
+
+        $this->clear_memory_savings();
+        wp_send_json_success();
+    }
+
     /**
      * Regenerate thumbnails for a specific attachment
      */

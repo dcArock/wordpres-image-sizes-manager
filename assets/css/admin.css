@@ -127,3 +127,128 @@ input:checked + .ism-slider:before {
     margin-top: 8px;
     font-style: italic;
 }
+
+/* Memory Statistics Styles */
+.ism-memory-stats {
+    display: flex;
+    gap: 20px;
+    margin: 20px 0;
+    flex-wrap: wrap;
+}
+
+.ism-total-memory {
+    flex: 1;
+    min-width: 300px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 25px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.ism-total-memory h2 {
+    margin: 0 0 15px 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: white;
+}
+
+.ism-memory-value {
+    font-size: 36px;
+    font-weight: 700;
+    margin: 10px 0;
+    color: white;
+}
+
+.ism-memory-description {
+    font-size: 14px;
+    opacity: 0.9;
+    margin: 0;
+    color: white;
+}
+
+.ism-memory-savings {
+    flex: 1;
+    min-width: 300px;
+    padding: 25px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.ism-memory-savings.ism-savings-positive {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    color: white;
+}
+
+.ism-memory-savings.ism-savings-negative {
+    background: linear-gradient(135deg, #ee9ca7 0%, #ffdde1 100%);
+    color: #333;
+}
+
+.ism-memory-savings h3 {
+    margin: 0 0 15px 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.ism-savings-positive h3 {
+    color: white;
+}
+
+.ism-savings-negative h3 {
+    color: #c62828;
+}
+
+.ism-savings-value {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 10px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ism-savings-icon {
+    font-size: 32px;
+    line-height: 1;
+}
+
+.ism-savings-positive .ism-savings-icon {
+    color: #fff;
+}
+
+.ism-savings-negative .ism-savings-icon {
+    color: #c62828;
+}
+
+.ism-savings-percentage {
+    font-size: 16px;
+    opacity: 0.9;
+    margin-left: 5px;
+}
+
+.ism-memory-savings .button-small {
+    margin-top: 15px;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: inherit;
+    font-size: 13px;
+    padding: 5px 12px;
+    height: auto;
+}
+
+.ism-savings-positive .button-small {
+    color: white;
+}
+
+.ism-savings-positive .button-small:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.ism-savings-negative .button-small {
+    color: #333;
+}
+
+.ism-savings-negative .button-small:hover {
+    background: rgba(0, 0, 0, 0.05);
+}

@@ -85,37 +85,56 @@
         // Handle regenerate button click
         regenerateButton.on('click', function(e) {
             e.preventDefault();
-            
+
             if (isRegenerating) {
                 return;
             }
-            
+
             isRegenerating = true;
             regenerateButton.attr('disabled', 'disabled');
             progressContainer.show();
             statusText.text(ism_data.regenerate_start);
-            
-            // Get all attachment IDs
+
+            // First, store the current memory usage
             $.ajax({
                 url: ism_data.ajax_url,
                 type: 'POST',
                 dataType: 'json',
                 data: {
-                    action: 'ism_regenerate_thumbnails',
-                    nonce: ism_data.nonce,
-                    attachment_id: 0
+                    action: 'ism_store_memory',
+                    nonce: ism_data.nonce
                 },
                 success: function(response) {
                     if (response.success) {
-                        attachmentIds = response.data.ids;
-                        totalAttachments = response.data.total;
-                        currentIndex = 0;
-                        
-                        if (totalAttachments > 0) {
-                            processNextAttachment();
-                        } else {
-                            completeRegeneration();
-                        }
+                        // Now get all attachment IDs
+                        $.ajax({
+                            url: ism_data.ajax_url,
+                            type: 'POST',
+                            dataType: 'json',
+                            data: {
+                                action: 'ism_regenerate_thumbnails',
+                                nonce: ism_data.nonce,
+                                attachment_id: 0
+                            },
+                            success: function(response) {
+                                if (response.success) {
+                                    attachmentIds = response.data.ids;
+                                    totalAttachments = response.data.total;
+                                    currentIndex = 0;
+
+                                    if (totalAttachments > 0) {
+                                        processNextAttachment();
+                                    } else {
+                                        completeRegeneration();
+                                    }
+                                } else {
+                                    handleError(response.data);
+                                }
+                            },
+                            error: function(jqXHR, textStatus, errorThrown) {
+                                handleError(textStatus + ': ' + errorThrown);
+                            }
+                        });
                     } else {
                         handleError(response.data);
                     }
@@ -189,6 +208,36 @@
             isRegenerating = false;
             regenerateButton.removeAttr('disabled');
         }
+
+        // Handle clear savings button click
+        $('#ism-clear-savings').on('click', function(e) {
+            e.preventDefault();
+
+            if (!confirm('Are you sure you want to clear the memory savings data?')) {
+                return;
+            }
+
+            $.ajax({
+                url: ism_data.ajax_url,
+                type: 'POST',
+                dataType: 'json',
+                data: {
+                    action: 'ism_clear_savings',
+                    nonce: ism_data.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Reload the page to show updated stats
+                        window.location.reload();
+                    } else {
+                        alert('Error clearing savings data');
+                    }
+                },
+                error: function() {
+                    alert('Error clearing savings data');
+                }
+            });
+        });
     });
-    
+
 })(jQuery);
