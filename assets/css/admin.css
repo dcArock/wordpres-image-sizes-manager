@@ -262,8 +262,11 @@ input:checked + .ism-slider:before {
 }
 
 .ism-regenerate-size:disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: not-allowed;
+    background-color: #f0f0f0 !important;
+    color: #a0a5aa !important;
+    border-color: #ddd !important;
 }
 
 /* Adjust table columns */
