@@ -3,7 +3,7 @@
  * Plugin Name: Image Size Manager
  * Plugin URI: https://dcarock.com/wordpress/
  * Description: Manage WordPress image sizes with enable/disable toggles and regenerate thumbnails.
- * Version: 2.1.0
+ * Version: 2.3.0
  * Author: Chris Arock
  * Author URI: https://dcarock.com
  * Text Domain: image-size-manager
@@ -16,7 +16,7 @@ if (!defined('WPINC')) {
 }
 
 // Define plugin constants
-define('ISM_VERSION', '2.1.0');
+define('ISM_VERSION', '2.3.0');
 define('ISM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ISM_PLUGIN_URL', plugin_dir_url(__FILE__));
 
