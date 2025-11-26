@@ -64,6 +64,9 @@ class Image_Size_Manager {
         // Ajax handler for regenerating thumbnails
         add_action('wp_ajax_ism_regenerate_thumbnails', array($this, 'ajax_regenerate_thumbnails'));
 
+        // Ajax handler for regenerating individual size
+        add_action('wp_ajax_ism_regenerate_size', array($this, 'ajax_regenerate_size'));
+
         // Ajax handler for storing pre-regeneration memory
         add_action('wp_ajax_ism_store_memory', array($this, 'ajax_store_memory'));
 
@@ -229,10 +232,11 @@ class Image_Size_Manager {
                             <th><?php echo esc_html__('Total Count', 'image-size-manager'); ?></th>
                             <th><?php echo esc_html__('Total Size', 'image-size-manager'); ?></th>
                             <th><?php echo esc_html__('Status', 'image-size-manager'); ?></th>
+                            <th><?php echo esc_html__('Actions', 'image-size-manager'); ?></th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($image_sizes as $size_name => $size_data) : 
+                        <?php foreach ($image_sizes as $size_name => $size_data) :
                             $usage_count = $this->count_images_with_size($size_name);
                             $total_size = $this->calculate_total_size($size_name);
                         ?>
@@ -248,6 +252,11 @@ class Image_Size_Manager {
                                         <input type="checkbox" name="<?php echo esc_attr($this->option_name); ?>[<?php echo esc_attr($size_name); ?>]" value="1" <?php checked(isset($settings[$size_name]) && $settings[$size_name]); ?>>
                                         <span class="ism-slider"></span>
                                     </label>
+                                </td>
+                                <td>
+                                    <button type="button" class="button button-small ism-regenerate-size" data-size="<?php echo esc_attr($size_name); ?>">
+                                        <?php echo esc_html__('Regenerate', 'image-size-manager'); ?>
+                                    </button>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -694,6 +703,65 @@ class Image_Size_Manager {
     }
 
     /**
+     * Ajax handler for regenerating a specific image size
+     */
+    public function ajax_regenerate_size() {
+        // Check nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'ism_nonce')) {
+            wp_send_json_error(__('Security check failed', 'image-size-manager'));
+            return;
+        }
+
+        // Check user capabilities
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(__('You do not have permission to do this', 'image-size-manager'));
+            return;
+        }
+
+        // Get size name
+        $size_name = isset($_POST['size_name']) ? sanitize_text_field(wp_unslash($_POST['size_name'])) : '';
+
+        if (empty($size_name)) {
+            wp_send_json_error(__('Invalid size name', 'image-size-manager'));
+            return;
+        }
+
+        // Get attachment ID
+        $attachment_id = isset($_POST['attachment_id']) ? intval($_POST['attachment_id']) : 0;
+
+        // Get total attachments for first request
+        if ($attachment_id === 0) {
+            $query = new WP_Query(array(
+                'post_type' => 'attachment',
+                'post_mime_type' => 'image',
+                'post_status' => 'inherit',
+                'fields' => 'ids',
+                'posts_per_page' => -1,
+            ));
+
+            wp_send_json_success(array(
+                'total' => $query->post_count,
+                'ids' => $query->posts
+            ));
+            return;
+        }
+
+        // Regenerate specific size for a specific attachment
+        if ($attachment_id > 0) {
+            $result = $this->regenerate_single_size($attachment_id, $size_name);
+
+            if (is_wp_error($result)) {
+                wp_send_json_error($result->get_error_message());
+            } else {
+                wp_send_json_success();
+            }
+            return;
+        }
+
+        wp_send_json_error(__('Invalid request', 'image-size-manager'));
+    }
+
+    /**
      * Ajax handler for storing pre-regeneration memory
      */
     public function ajax_store_memory() {
@@ -773,6 +841,107 @@ class Image_Size_Manager {
 
         // Update attachment metadata
         wp_update_attachment_metadata($attachment_id, $new_metadata);
+
+        return true;
+    }
+
+    /**
+     * Regenerate a specific image size for an attachment
+     *
+     * @param int $attachment_id The attachment ID
+     * @param string $size_name The name of the size to regenerate
+     * @return true|WP_Error True on success, WP_Error on failure
+     */
+    private function regenerate_single_size($attachment_id, $size_name) {
+        $attachment = get_post($attachment_id);
+
+        if (!$attachment || 'attachment' !== $attachment->post_type || 'image/' !== substr($attachment->post_mime_type, 0, 6)) {
+            return new WP_Error('not_image', __('This is not a valid image attachment', 'image-size-manager'));
+        }
+
+        // Get the original image file path
+        $file_path = get_attached_file($attachment_id);
+
+        if (!file_exists($file_path)) {
+            return new WP_Error('file_not_found', __('Original image file not found', 'image-size-manager'));
+        }
+
+        // Include image functions if not already loaded
+        if (!function_exists('wp_get_image_editor')) {
+            require_once(ABSPATH . 'wp-admin/includes/image.php');
+        }
+
+        // Get all available sizes
+        $all_sizes = $this->get_all_image_sizes();
+
+        // Check if the requested size exists
+        if (!isset($all_sizes[$size_name])) {
+            return new WP_Error('invalid_size', __('Invalid image size', 'image-size-manager'));
+        }
+
+        // Get current metadata
+        $metadata = wp_get_attachment_metadata($attachment_id);
+
+        if (!$metadata || !is_array($metadata)) {
+            return new WP_Error('no_metadata', __('Could not retrieve attachment metadata', 'image-size-manager'));
+        }
+
+        // Remove old version of this size if it exists
+        if (isset($metadata['sizes'][$size_name]) && isset($metadata['sizes'][$size_name]['file'])) {
+            $old_file = dirname($file_path) . '/' . $metadata['sizes'][$size_name]['file'];
+            if (file_exists($old_file) && is_file($old_file)) {
+                @unlink($old_file);
+            }
+        }
+
+        // Get image editor
+        $editor = wp_get_image_editor($file_path);
+
+        if (is_wp_error($editor)) {
+            return $editor;
+        }
+
+        // Get size data
+        $size_data = $all_sizes[$size_name];
+        $width = isset($size_data['width']) ? $size_data['width'] : 0;
+        $height = isset($size_data['height']) ? $size_data['height'] : 0;
+        $crop = isset($size_data['crop']) ? $size_data['crop'] : false;
+
+        // Resize the image
+        $resized = $editor->resize($width, $height, $crop);
+
+        if (is_wp_error($resized)) {
+            return $resized;
+        }
+
+        // Generate filename
+        $dest_file_name = $editor->generate_filename(
+            $size_name,
+            dirname($file_path),
+            null
+        );
+
+        // Save the resized image
+        $saved = $editor->save($dest_file_name);
+
+        if (is_wp_error($saved)) {
+            return $saved;
+        }
+
+        // Update metadata with new size information
+        if (!isset($metadata['sizes'])) {
+            $metadata['sizes'] = array();
+        }
+
+        $metadata['sizes'][$size_name] = array(
+            'file' => basename($saved['path']),
+            'width' => $saved['width'],
+            'height' => $saved['height'],
+            'mime-type' => $saved['mime-type']
+        );
+
+        // Update attachment metadata
+        wp_update_attachment_metadata($attachment_id, $metadata);
 
         return true;
     }

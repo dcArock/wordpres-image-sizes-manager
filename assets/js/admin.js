@@ -238,6 +238,134 @@
                 }
             });
         });
+
+        // Handle individual size regeneration
+        var sizeAttachmentIds = [];
+        var sizeTotalAttachments = 0;
+        var sizeCurrentIndex = 0;
+        var sizeIsRegenerating = false;
+        var currentSizeName = '';
+        var currentButton = null;
+
+        $('.ism-regenerate-size').on('click', function(e) {
+            e.preventDefault();
+
+            if (sizeIsRegenerating || isRegenerating) {
+                alert('A regeneration process is already running. Please wait for it to complete.');
+                return;
+            }
+
+            currentButton = $(this);
+            currentSizeName = currentButton.data('size');
+
+            if (!confirm('Regenerate "' + currentSizeName + '" size for all images?\n\nThis will regenerate this specific image size for all images in your media library.')) {
+                return;
+            }
+
+            sizeIsRegenerating = true;
+            currentButton.attr('disabled', 'disabled').text('Regenerating...');
+            progressContainer.show();
+            statusText.text('Starting regeneration of "' + currentSizeName + '"...');
+
+            // Get all attachment IDs
+            $.ajax({
+                url: ism_data.ajax_url,
+                type: 'POST',
+                dataType: 'json',
+                data: {
+                    action: 'ism_regenerate_size',
+                    nonce: ism_data.nonce,
+                    size_name: currentSizeName,
+                    attachment_id: 0
+                },
+                success: function(response) {
+                    if (response.success) {
+                        sizeAttachmentIds = response.data.ids;
+                        sizeTotalAttachments = response.data.total;
+                        sizeCurrentIndex = 0;
+
+                        if (sizeTotalAttachments > 0) {
+                            processSizeNextAttachment();
+                        } else {
+                            completeSizeRegeneration();
+                        }
+                    } else {
+                        handleSizeError(response.data);
+                    }
+                },
+                error: function(jqXHR, textStatus, errorThrown) {
+                    handleSizeError(textStatus + ': ' + errorThrown);
+                }
+            });
+        });
+
+        // Process next attachment for size regeneration
+        function processSizeNextAttachment() {
+            if (sizeCurrentIndex >= sizeTotalAttachments) {
+                completeSizeRegeneration();
+                return;
+            }
+
+            var attachmentId = sizeAttachmentIds[sizeCurrentIndex];
+            var progress = Math.floor((sizeCurrentIndex / sizeTotalAttachments) * 100);
+
+            // Update progress bar
+            progressBar.progressbar('value', progress);
+            statusText.text(
+                'Regenerating "' + currentSizeName + '" for image ' +
+                (sizeCurrentIndex + 1) + ' of ' + sizeTotalAttachments +
+                ' (' + progress + '%)'
+            );
+
+            // Process attachment
+            $.ajax({
+                url: ism_data.ajax_url,
+                type: 'POST',
+                dataType: 'json',
+                data: {
+                    action: 'ism_regenerate_size',
+                    nonce: ism_data.nonce,
+                    size_name: currentSizeName,
+                    attachment_id: attachmentId
+                },
+                success: function(response) {
+                    if (response.success) {
+                        sizeCurrentIndex++;
+                        processSizeNextAttachment();
+                    } else {
+                        handleSizeError(response.data);
+                    }
+                },
+                error: function(jqXHR, textStatus, errorThrown) {
+                    handleSizeError(textStatus + ': ' + errorThrown);
+                }
+            });
+        }
+
+        // Complete size regeneration
+        function completeSizeRegeneration() {
+            progressBar.progressbar('value', 100);
+            statusText.text('Regeneration of "' + currentSizeName + '" complete!');
+
+            // Show refresh button
+            $('#ism-refresh-container').show();
+
+            setTimeout(function() {
+                sizeIsRegenerating = false;
+                if (currentButton) {
+                    currentButton.removeAttr('disabled').text('Regenerate');
+                }
+            }, 2000);
+        }
+
+        // Handle size regeneration error
+        function handleSizeError(errorMessage) {
+            statusText.text('Error regenerating "' + currentSizeName + '": ' + errorMessage);
+            sizeIsRegenerating = false;
+            if (currentButton) {
+                currentButton.removeAttr('disabled').text('Regenerate');
+            }
+        }
     });
 
 })(jQuery);

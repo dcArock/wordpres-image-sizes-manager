@@ -252,3 +252,23 @@ input:checked + .ism-slider:before {
 .ism-savings-negative .button-small:hover {
     background: rgba(0, 0, 0, 0.05);
 }
+
+/* Individual size regeneration buttons */
+.ism-regenerate-size {
+    font-size: 13px;
+    padding: 5px 12px;
+    height: auto;
+    white-space: nowrap;
+}
+
+.ism-regenerate-size:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Adjust table columns */
+.ism-table th:nth-child(8),
+.ism-table td:nth-child(8) {
+    text-align: center;
+    width: 100px;
+}
