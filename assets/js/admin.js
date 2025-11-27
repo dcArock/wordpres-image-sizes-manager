@@ -14,6 +14,8 @@
         var totalAttachments = 0;
         var currentIndex = 0;
         var isRegenerating = false;
+        var failedAttachments = [];
+        var successCount = 0;
         
         // Initialize progress bar
         progressBar.progressbar({
@@ -94,6 +96,8 @@
             regenerateButton.attr('disabled', 'disabled');
             progressContainer.show();
             statusText.text(ism_data.regenerate_start);
+            failedAttachments = [];
+            successCount = 0;
 
             // First, store the current memory usage
             $.ajax({
@@ -151,10 +155,10 @@
                 completeRegeneration();
                 return;
             }
-            
+
             var attachmentId = attachmentIds[currentIndex];
             var progress = Math.floor((currentIndex / totalAttachments) * 100);
-            
+
             // Update progress bar
             progressBar.progressbar('value', progress);
             statusText.text(
@@ -163,7 +167,7 @@
                     .replace('%2$s', totalAttachments)
                     .replace('%3$s', progress)
             );
-            
+
             // Process attachment
             $.ajax({
                 url: ism_data.ajax_url,
@@ -176,14 +180,33 @@
                 },
                 success: function(response) {
                     if (response.success) {
-                        currentIndex++;
-                        processNextAttachment();
+                        successCount++;
                     } else {
-                        handleError(response.data);
+                        // Log error but continue processing
+                        var errorMsg = typeof response.data === 'object' ? response.data.message : response.data;
+                        var errorData = {
+                            attachment_id: attachmentId,
+                            error: errorMsg
+                        };
+                        if (typeof response.data === 'object') {
+                            errorData.error_code = response.data.error_code;
+                        }
+                        failedAttachments.push(errorData);
+                        console.error('Failed to regenerate attachment ' + attachmentId + ':', errorMsg);
                     }
+                    // Always continue to next attachment
+                    currentIndex++;
+                    processNextAttachment();
                 },
                 error: function(jqXHR, textStatus, errorThrown) {
-                    handleError(textStatus + ': ' + errorThrown);
+                    // Log AJAX error but continue processing
+                    failedAttachments.push({
+                        attachment_id: attachmentId,
+                        error: textStatus + ': ' + errorThrown
+                    });
+                    console.error('AJAX error for attachment ' + attachmentId + ':', textStatus, errorThrown);
+                    currentIndex++;
+                    processNextAttachment();
                 }
             });
         }
@@ -191,11 +214,30 @@
         // Complete regeneration
         function completeRegeneration() {
             progressBar.progressbar('value', 100);
-            statusText.text(ism_data.regenerate_complete);
-            
+
+            // Build summary message
+            var summaryMsg = 'Regeneration complete! ';
+            summaryMsg += 'Success: ' + successCount + ' image(s)';
+
+            if (failedAttachments.length > 0) {
+                summaryMsg += ', Failed: ' + failedAttachments.length + ' image(s)';
+                summaryMsg += ' (see console for details)';
+
+                // Log detailed error information
+                console.group('Image Regeneration Errors');
+                console.log('Total failed:', failedAttachments.length);
+                console.table(failedAttachments);
+                console.groupEnd();
+
+                // Add visual indicator for warnings
+                statusText.html(summaryMsg + ' <span style="color: #d63638;">⚠</span>');
+            } else {
+                statusText.text(summaryMsg);
+            }
+
             // Show refresh button
             $('#ism-refresh-container').show();
-            
+
             setTimeout(function() {
                 isRegenerating = false;
                 regenerateButton.removeAttr('disabled');
@@ -246,6 +288,8 @@
         var sizeIsRegenerating = false;
         var currentSizeName = '';
         var currentButton = null;
+        var sizeFailedAttachments = [];
+        var sizeSuccessCount = 0;
 
         $('.ism-regenerate-size').on('click', function(e) {
             e.preventDefault();
@@ -266,6 +310,8 @@
             currentButton.attr('disabled', 'disabled').text('Regenerating...');
             progressContainer.show();
             statusText.text('Starting regeneration of "' + currentSizeName + '"...');
+            sizeFailedAttachments = [];
+            sizeSuccessCount = 0;
 
             // Get all attachment IDs
             $.ajax({
@@ -330,14 +376,35 @@
                 },
                 success: function(response) {
                     if (response.success) {
-                        sizeCurrentIndex++;
-                        processSizeNextAttachment();
+                        sizeSuccessCount++;
                     } else {
-                        handleSizeError(response.data);
+                        // Log error but continue processing
+                        var errorMsg = typeof response.data === 'object' ? response.data.message : response.data;
+                        var errorData = {
+                            attachment_id: attachmentId,
+                            size: currentSizeName,
+                            error: errorMsg
+                        };
+                        if (typeof response.data === 'object') {
+                            errorData.error_code = response.data.error_code;
+                        }
+                        sizeFailedAttachments.push(errorData);
+                        console.error('Failed to regenerate ' + currentSizeName + ' for attachment ' + attachmentId + ':', errorMsg);
                     }
+                    // Always continue to next attachment
+                    sizeCurrentIndex++;
+                    processSizeNextAttachment();
                 },
                 error: function(jqXHR, textStatus, errorThrown) {
-                    handleSizeError(textStatus + ': ' + errorThrown);
+                    // Log AJAX error but continue processing
+                    sizeFailedAttachments.push({
+                        attachment_id: attachmentId,
+                        size: currentSizeName,
+                        error: textStatus + ': ' + errorThrown
+                    });
+                    console.error('AJAX error for ' + currentSizeName + ' attachment ' + attachmentId + ':', textStatus, errorThrown);
+                    sizeCurrentIndex++;
+                    processSizeNextAttachment();
                 }
             });
         }
@@ -345,7 +412,26 @@
         // Complete size regeneration
         function completeSizeRegeneration() {
             progressBar.progressbar('value', 100);
-            statusText.text('Regeneration of "' + currentSizeName + '" complete!');
+
+            // Build summary message
+            var summaryMsg = 'Regeneration of "' + currentSizeName + '" complete! ';
+            summaryMsg += 'Success: ' + sizeSuccessCount + ' image(s)';
+
+            if (sizeFailedAttachments.length > 0) {
+                summaryMsg += ', Failed: ' + sizeFailedAttachments.length + ' image(s)';
+                summaryMsg += ' (see console for details)';
+
+                // Log detailed error information
+                console.group('Size "' + currentSizeName + '" Regeneration Errors');
+                console.log('Total failed:', sizeFailedAttachments.length);
+                console.table(sizeFailedAttachments);
+                console.groupEnd();
+
+                // Add visual indicator for warnings
+                statusText.html(summaryMsg + ' <span style="color: #d63638;">⚠</span>');
+            } else {
+                statusText.text(summaryMsg);
+            }
 
             // Show refresh button
             $('#ism-refresh-container').show();
